@@ -1,0 +1,5 @@
+simulation:
+  dt: 0.005
+  duration: 10.0
+  realtime_sync: true
+  gravity: 9.81

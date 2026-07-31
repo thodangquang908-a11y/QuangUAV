@@ -1,0 +1,12 @@
+environment:
+  gravity: 9.81
+  air_density: 1.225
+  wind:
+    velocity_ned: [1.5, -1.0, 0.0]  # Gió thổi gió ngang 1.5 m/s trục X, -1.0 m/s trục Y
+    gust_std: 0.3                    # Nhiễu gió giật Gaussian
+  drag:
+    linear_coeff: [0.10, 0.10, 0.15] # Hệ số cản không khí tịnh tiến
+  ground_effect:
+    enabled: true
+    rotor_height_ground: 0.05        # Chiều cao cánh quạt khi đậu
+    coeff: 0.25                      # Cường độ hiệu ứng mặt đất

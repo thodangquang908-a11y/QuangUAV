@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quanguav"
+version = "0.1.0"
+description = "Core UAV Research & Hardware-In-The-Loop Simulation Stack"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "QuangUAV Research Team" }]
+dependencies = [
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "pyserial>=3.5",
+    "matplotlib>=3.7.0",
+    "pygame>=2.5.0",
+    "PyOpenGL>=3.1.6",
+    "PyQt5>=5.15.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "mypy>=1.4.0",
+    "black>=23.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+addopts = "-p no:launch_testing -p no:ros_launch_testing"
+testpaths = ["tests"]
+
+[tool.pytest.ini_options]
+addopts = "-p no:launch_testing -p no:launch_testing_ros -p no:ament_flake8 -p no:ament_pep257 -p no:ament_xmllint -p no:ament_copyright -p no:ament_lint"
+testpaths = ["tests"]

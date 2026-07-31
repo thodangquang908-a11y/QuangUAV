@@ -1,0 +1,15 @@
+controllers:
+  rate:
+    roll:  { kp: 0.20, ki: 0.05, kd: 0.005, limit_out: 0.80, limit_int: 0.20, lpf_cutoff: 35.0 }
+    pitch: { kp: 0.20, ki: 0.05, kd: 0.005, limit_out: 0.80, limit_int: 0.20, lpf_cutoff: 35.0 }
+    yaw:   { kp: 0.30, ki: 0.02, kd: 0.000, limit_out: 0.50, limit_int: 0.10, lpf_cutoff: 20.0 }
+  attitude:
+    roll:  { kp: 7.0, limit_out: 10.0 }
+    pitch: { kp: 7.0, limit_out: 10.0 }
+    yaw:   { kp: 3.8, limit_out: 5.0 }
+  altitude:
+    pos_z: { kp: 2.0, limit_out:  3.0 }
+    vel_z: { kp: 4.5, ki: 1.50, kd: 0.150, limit_out: 14.0, limit_int: 4.00, lpf_cutoff: 15.0 }
+  position:
+    pos_xy: { kp: 1.2, limit_out: 3.0 }
+    vel_xy: { kp: 2.2, ki: 0.30, kd: 0.080, limit_out: 0.436, limit_int: 0.15, lpf_cutoff: 12.0 }

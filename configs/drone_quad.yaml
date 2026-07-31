@@ -1,0 +1,13 @@
+drone:
+  type: "quadcopter_x"
+  mass: 1.2
+  arm_length: 0.25
+  inertia:
+    Ixx: 0.015
+    Iyy: 0.015
+    Izz: 0.030
+  actuators:
+    max_rpm: 9000.0
+    time_constant: 0.03
+    Ct: 3.0e-5
+    Cq: 1.1e-6
