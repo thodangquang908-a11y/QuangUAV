@@ -1,5 +1,6 @@
 import numpy as np
 from enum import Enum
+from runtime.runtime_manager import RuntimeManager
 
 class FlightMode(Enum):
     INIT = "INIT"
@@ -10,29 +11,25 @@ class FlightMode(Enum):
     LAND = "LAND"
 
 class FlightController:
-    """Autopilot Core Hub: Bộ tạo Quỹ đạo Bay 3D Figure-8 (Lissajous Curve)."""
+    """
+    AUTOPILOT CORE HUB - SOFTWARE-DEFINED UAV ARCHITECTURE
+    Ủy quyền hoàn toàn việc tính toán tín hiệu điều khiển cho RuntimeManager.
+    """
     def __init__(self, mass: float = 1.2) -> None:
         self.mass = mass
         self.g = 9.81
-        self.hover_thrust = self.mass * self.g # ~11.77 N
+        
+        # 🟢 TRẠM ĐIỀU PHỐI RUNTIME TRUNG TÂM
+        self.runtime = RuntimeManager(default_controller_name="PID")
 
         self.mode = FlightMode.READY
         self.target_pos = np.array([0.0, 0.0, 0.0], dtype=np.float64)
         self.takeoff_target_z = -10.0
         
-        # Biến điều khiển Quỹ đạo Figure-8
         self.mission_start_time = 0.0
-        self.traj_radius_x = 15.0 # Bán kính X (15m)
-        self.traj_radius_y = 10.0 # Bán kính Y (10m)
-        self.omega = 0.25         # Tốc độ góc (rad/s)
-
-        # PID Gains
-        self.kp_z = 1.5
-        self.kd_z = 2.0
-        self.kp_xy = 0.8
-        self.kd_xy = 1.1
-        self.kp_att = 4.0
-        self.kd_rate = 0.18
+        self.traj_radius_x = 15.0
+        self.traj_radius_y = 10.0
+        self.omega = 0.25
 
     def arm_and_takeoff(self, target_z: float = -10.0) -> None:
         self.mode = FlightMode.TAKEOFF
@@ -50,7 +47,7 @@ class FlightController:
 
         pos_z = curr_pos[2]
 
-        # 1. GENERATE FIGURE-8 TRAJECTORY WHEN REACHED TAKEOFF ALTITUDE
+        # 1. TẠO QUỸ ĐẠO BAY (TRAJECTORY GENERATOR)
         if self.mode == FlightMode.TAKEOFF:
             if abs(pos_z - self.takeoff_target_z) < 0.6:
                 self.mode = FlightMode.MISSION
@@ -59,43 +56,37 @@ class FlightController:
         elif self.mode == FlightMode.MISSION:
             t = sim_time - self.mission_start_time
             w = self.omega
-            
-            # Phương trình tham số 3D Figure-8
             des_x = self.traj_radius_x * np.sin(w * t)
             des_y = self.traj_radius_y * np.sin(2.0 * w * t)
-            des_z = -10.0 - 3.0 * np.sin(0.5 * w * t) # Uốn lượn 7m đến 13m
-
+            des_z = -10.0 - 3.0 * np.sin(0.5 * w * t)
             self.target_pos = np.array([des_x, des_y, des_z], dtype=np.float64)
 
-        # 2. ALTITUDE POSITION & VELOCITY CONTROL
-        pos_err_z = self.target_pos[2] - pos_z
-        target_vel_z = np.clip(pos_err_z * self.kp_z, -2.5, 2.5)
-        vel_err_z = target_vel_z - curr_vel[2]
+        # 2. ĐÓNG GÓI STATE & TARGET STATE VECTOR (12-STATES)
+        # Vector state: [x, y, z, vx, vy, vz, phi, theta, psi, p, q, r]
+        target_state_vec = np.zeros(12)
+        target_state_vec[0:3] = self.target_pos
 
-        thrust_cmd = self.hover_thrust - vel_err_z * self.kd_z
-        thrust_cmd = np.clip(thrust_cmd, 2.0, 24.0)
+        current_state_vec = np.zeros(12)
+        current_state_vec[0:3] = curr_pos
+        current_state_vec[3:6] = curr_vel
+        current_state_vec[6:9] = curr_att
+        current_state_vec[9:12] = curr_rate
 
-        # 3. HORIZONTAL POSITION & VELOCITY CONTROL
-        pos_err_xy = self.target_pos[0:2] - curr_pos[0:2]
-        target_vel_xy = np.clip(pos_err_xy * self.kp_xy, -3.0, 3.0)
-        vel_err_xy = target_vel_xy - curr_vel[0:2]
+        # 🟢 3. MẠCH NỐI CHÍ MẠNG: ỦY QUYỀN TÍNH TOÁN CHO RUNTIMEMANAGER!
+        # Tùy thuộc vào controller đang active (PID/LQR/MPC), Runtime sẽ tính toán u_control
+        u_control = self.runtime.compute_control_signals(
+            target_state=target_state_vec,
+            current_state=current_state_vec,
+            dt=0.0025,
+            sim_time=sim_time
+        )
 
-        pitch_cmd = np.clip(-(vel_err_xy[0] * 0.15 + pos_err_xy[0] * 0.05), -0.35, 0.35)
-        roll_cmd  = np.clip( (vel_err_xy[1] * 0.15 + pos_err_xy[1] * 0.05), -0.35, 0.35)
+        thrust_cmd = u_control[0]
+        torques = u_control[1:4]
+        torque_roll, torque_pitch, torque_yaw = torques[0], torques[1], torques[2]
 
-        # 4. ATTITUDE RATE PID CONTROL
-        att_err_roll  = roll_cmd - curr_att[0]
-        att_err_pitch = pitch_cmd - curr_att[1]
-
-        torque_roll  = att_err_roll * self.kp_att - curr_rate[0] * self.kd_rate
-        torque_pitch = att_err_pitch * self.kp_att - curr_rate[1] * self.kd_rate
-        torque_yaw   = (0.0 - curr_att[2]) * 0.8 - curr_rate[2] * 0.1
-
-        torques = np.array([torque_roll, torque_pitch, torque_yaw], dtype=np.float64)
-
-        # 5. QUADCOPTER X MOTOR MIXER MATRIX
+        # 4. QUADCOPTER X MOTOR MIXER MATRIX
         f_base = thrust_cmd / 4.0
-        
         f1 = f_base - torque_roll * 2.0 + torque_pitch * 2.0 - torque_yaw * 1.0
         f2 = f_base + torque_roll * 2.0 - torque_pitch * 2.0 - torque_yaw * 1.0
         f3 = f_base + torque_roll * 2.0 + torque_pitch * 2.0 + torque_yaw * 1.0
