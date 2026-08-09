@@ -2,17 +2,33 @@ import numpy as np
 from interfaces.i_controller import IController
 
 class MPCController(IController):
-    def __init__(self, horizon: int = 10):
+    def __init__(self, mass: float = 1.2, g: float = 9.81):
         super().__init__()
-        self.N = horizon
-        self.mass = 1.2
-        self.g = 9.81
-        self.u_hover = self.mass * self.g
-        print(f"[MPCController] Initialized MPC Controller Framework (Horizon N={self.N}).")
+        self.mass = mass
+        self.g = g
+        self.hover_thrust = mass * g
 
     def reset(self) -> None:
         pass
 
     def compute_control_signals(self, target_state: np.ndarray, current_state: np.ndarray, dt: float) -> np.ndarray:
-        # Tạm thời trả về tín hiệu Hover an toàn cho MPC Framework
-        return np.array([self.u_hover, 0.0, 0.0, 0.0], dtype=np.float64)
+        pos, target_pos = current_state[0:3], target_state[0:3]
+        vel = current_state[3:6]
+        att = current_state[6:9]
+        omega = current_state[9:12]
+
+        err_z = pos[2] - target_pos[2]
+        delta_thrust = 4.0 * err_z - 2.5 * vel[2]
+        total_thrust = np.clip(self.hover_thrust + delta_thrust, 5.0, 20.0)
+
+        err_x = pos[0] - target_pos[0]
+        err_y = pos[1] - target_pos[1]
+
+        pitch_cmd = np.clip(0.08 * err_x + 0.15 * vel[0], -0.2, 0.2)
+        roll_cmd = np.clip(-0.08 * err_y - 0.15 * vel[1], -0.2, 0.2)
+
+        t_roll = -4.0 * (att[0] - roll_cmd) - 0.5 * omega[0]
+        t_pitch = -4.0 * (att[1] - pitch_cmd) - 0.5 * omega[1]
+        t_yaw = -2.0 * (att[2] - target_state[8]) - 0.3 * omega[2]
+
+        return np.array([total_thrust, np.clip(t_roll, -0.2, 0.2), np.clip(t_pitch, -0.2, 0.2), np.clip(t_yaw, -0.2, 0.2)])
