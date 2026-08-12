@@ -1,91 +1,81 @@
 import numpy as np
-import time
-from interfaces.i_controller import IController
 from controllers.pid_controller import PIDController
 from controllers.lqr_controller import LQRController
 from controllers.mpc_controller import MPCController
-from runtime.safe_transition import HealthMonitor, SafeTransitionLayer
 
-class RuntimeManager(IController):
+class RuntimeManager:
     """
-    SOFTWARE-DEFINED UAV RUNTIME CORE - SPRINT 4 (SAFE TRANSITION & WARM START)
+    Quản lý Chuyển đổi Thuật toán Điều khiển An toàn (Safe Dynamic Hot-Swap).
+    Tự động tương thích với cả 2 cách truyền tham số khởi tạo từ FlightController.
     """
-    def __init__(self, default_controller_name: str = "PID"):
-        super().__init__()
-        
-        self.controllers = {
-            "PID": PIDController(),
-            "LQR": LQRController(),
-            "MPC": MPCController()
-        }
-        
-        self.active_name = default_controller_name.upper()
-        self.active_controller_name = self.active_name
-        self.active_controller = self.controllers.get(self.active_name, self.controllers["PID"])
-        
-        self.transition_layer = SafeTransitionLayer(blend_duration_sec=0.2) # Cross-fading 200ms
-        self.health_monitor = HealthMonitor(max_latency_ms=2.5)
-        
-        print("==================================================================================")
-        print(f"⚙️ [RUNTIMEMANAGER] Initialized Software-Defined UAV Core Platform.")
-        print(f"⚙️ Active Core Controller : [{self.active_name}]")
-        print("==================================================================================")
 
-    def request_hot_swap(self, new_controller_name: str, sim_time: float = 0.0) -> bool:
-        """Hàm đồng bộ chữ ký chuẩn với GCS GUI & Simulator Loop"""
-        return self.switch_controller(new_controller_name, sim_time=sim_time)
+    def __init__(self, controllers_dict: dict = None, default_active: str = "PID", default_controller_name: str = None):
+        # Tự động tương thích tên tham số truyền vào từ flight_controller.py
+        if default_controller_name is not None:
+            default_active = default_controller_name
 
-    def switch_controller(self, name: str, sim_time: float = 0.0) -> bool:
-        target_name = name.upper()
+        # Tự động nạp danh sách 3 bộ điều khiển nếu controllers_dict bị bỏ trống
+        if controllers_dict is None:
+            controllers_dict = {
+                "PID": PIDController(mass=1.2),
+                "LQR": LQRController(mass=1.2),
+                "MPC": MPCController(mass=1.2)
+            }
+
+        self.controllers = controllers_dict
+        self.active_name = default_active
+        self.active_controller = self.controllers[default_active]
+
+        # Trạng thái Hot-Swap
+        self.is_transitioning = False
+        self.previous_controller = None
+        self.transition_start_time = 0.0
+        self.transition_duration = 0.200  # Cửa sổ chuyển giao 200ms
+
+    def request_hot_swap(self, target_name: str, sim_time: float) -> bool:
         if target_name not in self.controllers:
-            print(f"❌ [RUNTIME REJECT] Controller '{target_name}' not registered!")
+            print(f"❌ [HOT-SWAP FAILED] Controller '{target_name}' not found.")
             return False
 
         if target_name == self.active_name:
             return True
 
-        old_ctrl = self.active_controller
-        new_ctrl = self.controllers[target_name]
-
-        # 🟢 WARM START & STATE SYNCHRONIZATION
-        # Chuyển tiếp tích lũy Integrator từ PID sang LQR/MPC để chống giật lực
-        if hasattr(new_ctrl, 'sync_state_from_previous'):
-            new_ctrl.sync_state_from_previous(old_ctrl)
-
-        self.transition_layer.start_transition(old_ctrl, new_ctrl, sim_time)
-        
-        print("\n" + "=" * 80)
-        print(f"🔥 [RUNTIME HOT-SWAP SUCCESS] Sim Time: {sim_time:.2f}s")
-        print(f"🔄 Dynamic Transition : [{self.active_name}]  ➔  [{target_name}]")
-        print(f"🛡️ State Synchronization & Cross-Fading : ACTIVE (200ms Window)")
-        print("=" * 80 + "\n")
-
+        self.previous_controller = self.active_controller
         self.active_name = target_name
-        self.active_controller_name = target_name
-        self.active_controller = new_ctrl
+        self.active_controller = self.controllers[target_name]
+        
+        # Reset trạng thái bộ điều khiển mới
+        self.active_controller.reset()
+
+        self.is_transitioning = True
+        self.transition_start_time = sim_time
+
+        print(f"🔥 [RUNTIME HOT-SWAP] Transitioning -> [{target_name}] at Sim Time: {sim_time:.2f}s")
         return True
 
     def compute_control_signals(self, target_state: np.ndarray, current_state: np.ndarray, dt: float, sim_time: float = 0.0) -> np.ndarray:
-        t_start = time.perf_counter()
+        u_active = self.active_controller.compute_control_signals(target_state, current_state, dt)
 
-        if self.transition_layer.is_blending:
-            u_out = self.transition_layer.compute_blended_signals(target_state, current_state, dt, sim_time)
-        else:
-            u_out = self.active_controller.compute_control_signals(target_state, current_state, dt)
+        if not self.is_transitioning:
+            return u_active
 
-        compute_time_ms = (time.perf_counter() - t_start) * 1000.0
-        self.health_monitor.inspect(compute_time_ms, u_out)
+        elapsed = sim_time - self.transition_start_time
+        alpha = elapsed / self.transition_duration
 
-        return u_out
+        if alpha >= 1.0:
+            self.is_transitioning = False
+            self.previous_controller = None
+            print(f"✅ [HOT-SWAP COMPLETE] Fully switched to [{self.active_name}]")
+            return u_active
 
-    def reset(self) -> None:
-        if hasattr(self.active_controller, 'reset'):
-            self.active_controller.reset()
+        alpha = np.clip(alpha, 0.0, 1.0)
+        u_prev = self.previous_controller.compute_control_signals(target_state, current_state, dt)
+
+        # Nội suy tuyến tính tín hiệu điều khiển Cross-Fading
+        return (1.0 - alpha) * u_prev + alpha * u_active
 
     def get_telemetry_status(self) -> dict:
         return {
             "active_controller": self.active_name,
-            "is_blending": self.transition_layer.is_blending,
-            "health_status": self.health_monitor.health_status,
-            "compute_latency_ms": self.health_monitor.last_compute_time_ms
+            "is_transitioning": self.is_transitioning
         }

@@ -20,7 +20,7 @@ from physics.rigid_body_6dof import RigidBody6DoF
 class IntegratedGCSWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("QuangUAV - Ground Control Station & 6DoF Trajectory Telemetry")
+        self.setWindowTitle("QuangUAV - Ground Control Station & High-Performance 6DoF Simulator")
         self.setGeometry(30, 50, 1480, 820)
         self.setStyleSheet("background-color: #121212; color: #ffffff; font-family: Ubuntu, sans-serif;")
 
@@ -47,6 +47,7 @@ class IntegratedGCSWindow(QMainWindow):
         gcs_panel.setFixedWidth(320)
         gcs_lay = QVBoxLayout(gcs_panel)
 
+        # System Health
         sys_box = QGroupBox("SYSTEM HEALTH / ENVIRONMENT")
         sys_box.setStyleSheet("QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #424242; margin-top: 5px; }")
         sys_lay = QVBoxLayout(sys_box)
@@ -59,7 +60,7 @@ class IntegratedGCSWindow(QMainWindow):
         sys_lay.addWidget(QLabel("CPU Load: 12.4%  Flight Time: 19.9 s"))
         gcs_lay.addWidget(sys_box)
 
-        # BẢNG TỌA ĐỘ HUD HIỂN THỊ RÕ RÀNG
+        # Telemetry HUD
         hud_box = QGroupBox("REAL-TIME TELEMETRY HUD")
         hud_box.setStyleSheet("QGroupBox { font-weight: bold; color: #ffffff; border: 1px solid #424242; margin-top: 5px; }")
         hud_lay = QVBoxLayout(hud_box)
@@ -82,7 +83,7 @@ class IntegratedGCSWindow(QMainWindow):
             hud_lay.addWidget(w)
         gcs_lay.addWidget(hud_box)
 
-        # BỘ NÚT CHỌN CHIẾN LƯỢC BAY (RESET VỆT BAY KHI BẤM)
+        # Preset Trajectories
         traj_box = QGroupBox("PRESET TRAJECTORY PATTERNS")
         traj_box.setStyleSheet("QGroupBox { font-weight: bold; color: #00b0ff; border: 1px solid #424242; margin-top: 5px; }")
         traj_lay = QVBoxLayout(traj_box)
@@ -111,6 +112,7 @@ class IntegratedGCSWindow(QMainWindow):
             traj_lay.addWidget(b)
         gcs_lay.addWidget(traj_box)
 
+        # Runtime Control
         rt_box = QGroupBox("SOFTWARE-DEFINED RUNTIME")
         rt_box.setStyleSheet("QGroupBox { font-weight: bold; color: #00e676; border: 1px solid #424242; margin-top: 5px; }")
         rt_lay = QVBoxLayout(rt_box)
@@ -208,42 +210,63 @@ class IntegratedGCSWindow(QMainWindow):
         print(f"🌐 [GCS COMMAND] Switched Trajectory Pattern to: {traj_name}")
 
     def _compute_target_trajectory(self, t):
+        """MÁY SINH TỌA ĐỘ VÀ VẬN TỐC MỤC TIÊU 12-STATE [X,Y,Z, Vx,Vy,Vz, Phi,Theta,Psi, p,q,r]"""
         target = np.zeros(12)
+        
         if self.trajectory_type == "HOVER":
             target[0], target[1], target[2] = 0.0, 0.0, -10.0
+
         elif self.trajectory_type == "FIGURE8":
             R = 5.0
             w = 0.25
             target[0] = R * np.sin(w * t)
             target[1] = R * np.sin(2.0 * w * t) / 2.0
             target[2] = -10.0
+            # Vận tốc mục tiêu (Đạo hàm bậc 1)
+            target[3] = R * w * np.cos(w * t)
+            target[4] = R * w * np.cos(2.0 * w * t)
+
         elif self.trajectory_type == "HELIX":
             R = 5.0
             w = 0.3
             target[0] = R * np.cos(w * t)
             target[1] = R * np.sin(w * t)
             target[2] = -10.0 - 2.0 * np.sin(0.1 * t)
+            # Vận tốc mục tiêu
+            target[3] = -R * w * np.sin(w * t)
+            target[4] = R * w * np.cos(w * t)
+            target[5] = -0.2 * np.cos(0.1 * t)
+
         elif self.trajectory_type == "SQUARE":
             side = 5.0
             period = 16.0
             t_mod = t % period
             target[2] = -10.0
+            v_side = 2 * side / 4.0
             if t_mod < 4.0:
                 s = t_mod / 4.0
                 target[0], target[1] = -side + 2*side*s, -side
+                target[3], target[4] = v_side, 0.0
             elif t_mod < 8.0:
                 s = (t_mod - 4.0) / 4.0
                 target[0], target[1] = side, -side + 2*side*s
+                target[3], target[4] = 0.0, v_side
             elif t_mod < 12.0:
                 s = (t_mod - 8.0) / 4.0
                 target[0], target[1] = side - 2*side*s, side
+                target[3], target[4] = -v_side, 0.0
             else:
                 s = (t_mod - 12.0) / 4.0
                 target[0], target[1] = -side, side - 2*side*s
+                target[3], target[4] = 0.0, -v_side
+
         elif self.trajectory_type == "SINE":
             target[0] = 5.0 * np.sin(0.2 * t)
             target[1] = 0.3 * t % 10.0 - 5.0
             target[2] = -10.0 + 2.0 * np.sin(0.5 * t)
+            target[3] = 1.0 * np.cos(0.2 * t)
+            target[4] = 0.3
+            target[5] = 1.0 * np.cos(0.5 * t)
 
         return target
 
@@ -271,13 +294,8 @@ class IntegratedGCSWindow(QMainWindow):
 
         target_state = self._compute_target_trajectory(self.sim_time)
 
-        # 1. Thu thập dữ liệu cảm biến & PWMS
         _, _, pwms = self.fc.update_sensors_and_estimate(true_state, {}, self.sim_time)
-
-        # 2. Chạy thuật toán bộ điều khiển đang được active trong Runtime
         u_cmd = self.fc.runtime.compute_control_signals(target_state, current_state_array, self.dt, self.sim_time)
-
-        # 3. Cập nhật Physics Engine 6DoF
         self.physics.step(self.dt, u_cmd[0], u_cmd[1:4])
 
         pos = true_state["position"]
@@ -288,7 +306,6 @@ class IntegratedGCSWindow(QMainWindow):
         x, y, z = pos[0], pos[1], -pos[2]
         ref_x, ref_y, ref_z = target_state[0], target_state[1], -target_state[2]
 
-        # CẬP NHẬT TỌA ĐỘ HUD NỔI BẬT
         self.lbl_cur_pos.setText(f"📍 Actual (X,Y,Z):  [{x:6.2f}, {y:6.2f}, {z:6.2f}] m")
         self.lbl_target_pos.setText(f"🎯 Target (X,Y,Z):  [{ref_x:6.2f}, {ref_y:6.2f}, {ref_z:6.2f}] m")
         self.lbl_speed.setText(f"H-Speed: {np.linalg.norm(vel[0:2]):.2f} m/s    V-Speed: {-vel[2]:.2f} m/s")
