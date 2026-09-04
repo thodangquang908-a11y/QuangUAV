@@ -20,7 +20,7 @@ from physics.rigid_body_6dof import RigidBody6DoF
 class IntegratedGCSWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("QuangUAV - Interactive 3D Ground Control Station")
+        self.setWindowTitle("QuangUAV - Geofenced 3D Flight Control (Bounded Inside Coordinate Axes)")
         self.setGeometry(20, 40, 1600, 890)
         self.setStyleSheet("background-color: #0e1117; color: #ffffff; font-family: Ubuntu, sans-serif;")
 
@@ -35,8 +35,8 @@ class IntegratedGCSWindow(QMainWindow):
         
         self.sim_time = 0.0
         self.dt = 0.005          # 200 Hz
-        self.target_position = np.array([0.0, 0.0, 0.0]) # System NED
-        self.land_start_xy = np.array([0.0, 0.0])
+        self.target_position = np.array([5.0, 5.0, -10.0]) # Tâm bay ở giữa khung trục tọa độ
+        self.land_start_xy = np.array([5.0, 5.0])
 
         self.prop_angle = 0.0
 
@@ -45,12 +45,24 @@ class IntegratedGCSWindow(QMainWindow):
 
         self._init_ui()
 
-    def _generate_circle_points(self, radius, center_x=0.0, center_y=0.0, center_z=0.0, segments=32):
-        angles = np.linspace(0, 2*np.pi, segments)
-        xs = center_x + radius * np.cos(angles)
-        ys = center_y + radius * np.sin(angles)
-        zs = np.full_like(xs, center_z)
-        return np.column_stack([xs, ys, zs])
+    def _generate_1m_grid_planes(self, x_max=10, y_max=10, z_max=12):
+        xy_lines, xz_lines, yz_lines = [], [], []
+        for y in range(0, y_max + 1):
+            xy_lines.extend([[0.0, float(y), 0.0], [float(x_max), float(y), 0.0]])
+        for x in range(0, x_max + 1):
+            xy_lines.extend([[float(x), 0.0, 0.0], [float(x), float(y_max), 0.0]])
+
+        for z in range(0, z_max + 1):
+            xz_lines.extend([[0.0, 0.0, float(z)], [float(x_max), 0.0, float(z)]])
+        for x in range(0, x_max + 1):
+            xz_lines.extend([[float(x), 0.0, 0.0], [float(x), 0.0, float(z_max)]])
+
+        for z in range(0, z_max + 1):
+            yz_lines.extend([[0.0, 0.0, float(z)], [0.0, float(y_max), float(z)]])
+        for y in range(0, y_max + 1):
+            yz_lines.extend([[0.0, float(y), 0.0], [0.0, float(y), float(z_max)]])
+
+        return np.array(xy_lines, dtype=np.float32), np.array(xz_lines, dtype=np.float32), np.array(yz_lines, dtype=np.float32)
 
     def _init_ui(self):
         main_widget = QWidget()
@@ -77,7 +89,7 @@ class IntegratedGCSWindow(QMainWindow):
         self.lbl_cur_pos = QLabel("📍 Actual (X,Y,Z):  [ 0.00,  0.00,  0.00] m")
         self.lbl_cur_pos.setStyleSheet("color: #ffea00; font-size: 12px; font-weight: bold; background-color: #1c2128; padding: 4px;")
 
-        self.lbl_target_pos = QLabel("🎯 Target (X,Y,Z):  [ 0.00,  0.00,  0.00] m")
+        self.lbl_target_pos = QLabel("🎯 Target (X,Y,Z):  [ 5.00,  5.00, 10.00] m")
         self.lbl_target_pos.setStyleSheet("color: #00e676; font-size: 12px; font-weight: bold; background-color: #1c2128; padding: 4px;")
 
         self.lbl_error_3d = QLabel("⚠️ Error 3D (m)  :   0.000 m")
@@ -94,7 +106,7 @@ class IntegratedGCSWindow(QMainWindow):
         cmd_box.setStyleSheet("QGroupBox { font-weight: bold; color: #00e676; border: 1px solid #30363d; margin-top: 5px; }")
         cmd_grid = QGridLayout(cmd_box)
 
-        self.btn_takeoff = QPushButton("🛫 AUTO TAKEOFF")
+        self.btn_takeoff = QPushButton("🛫 AUTO TAKEOFF (10m)")
         self.btn_takeoff.setStyleSheet("background-color: #1f6beb; color: white; font-weight: bold; padding: 8px;")
         self.btn_takeoff.clicked.connect(self._cmd_takeoff)
 
@@ -116,28 +128,28 @@ class IntegratedGCSWindow(QMainWindow):
         cmd_grid.addWidget(self.btn_stop, 1, 1)
         gcs_lay.addWidget(cmd_box)
 
-        # 3. QUĨ ĐẠO PHỨC TẠP
-        traj_box = QGroupBox("3. ADVANCED 3D TRAJECTORIES")
+        # 3. QUĨ ĐẠO BÁM (NẰM TRỌN TRONG GÓC PHẦN TƯ KHUNG TRỤC)
+        traj_box = QGroupBox("3. BOUNDED 3D TRAJECTORIES")
         traj_box.setStyleSheet("QGroupBox { font-weight: bold; color: #a371f7; border: 1px solid #30363d; margin-top: 5px; }")
         traj_lay = QVBoxLayout(traj_box)
 
-        btn_knot = QPushButton("🪢 1. Trefoil Knot 3D")
+        btn_knot = QPushButton("🪢 1. In-Grid Knot 3D")
         btn_knot.setStyleSheet("background-color: #8957e5; color: white; font-weight: bold; padding: 5px; text-align: left;")
         btn_knot.clicked.connect(lambda: self._set_preset_trajectory("KNOT3D"))
 
-        btn_rose = QPushButton("🌸 2. 3D Rose Curve (4-Petal)")
+        btn_rose = QPushButton("🌸 2. In-Grid Rose Curve")
         btn_rose.setStyleSheet("background-color: #d2a8ff; color: #0d1117; font-weight: bold; padding: 5px; text-align: left;")
         btn_rose.clicked.connect(lambda: self._set_preset_trajectory("ROSE3D"))
 
-        btn_cone = QPushButton("🌪 3. Conical Helix Spiral")
+        btn_cone = QPushButton("🌪 3. In-Grid Conical Helix")
         btn_cone.setStyleSheet("background-color: #0891b2; color: white; font-weight: bold; padding: 5px; text-align: left;")
         btn_cone.clicked.connect(lambda: self._set_preset_trajectory("CONICAL"))
 
-        btn_grid = QPushButton("🔲 4. 3D Grid Search (Sweep)")
+        btn_grid = QPushButton("🔲 4. In-Grid Square Sweep")
         btn_grid.setStyleSheet("background-color: #1f6beb; color: white; font-weight: bold; padding: 5px; text-align: left;")
         btn_grid.clicked.connect(lambda: self._set_preset_trajectory("GRIDSEARCH"))
 
-        btn_fig8 = QPushButton("♾ 5. Standard Figure-8")
+        btn_fig8 = QPushButton("♾ 5. In-Grid Figure-8")
         btn_fig8.setStyleSheet("background-color: #238636; color: white; font-weight: bold; padding: 5px; text-align: left;")
         btn_fig8.clicked.connect(lambda: self._set_preset_trajectory("FIGURE8"))
 
@@ -161,7 +173,7 @@ class IntegratedGCSWindow(QMainWindow):
         splitter.addWidget(gcs_panel)
 
         # =========================================================================
-        # CỘT GIỮA: OPENGL 3D VIEWPORT & KHUNG Ô VUÔNG ĐƠN VỊ 1M (3D UNIT GRID CAGE)
+        # CỘT GIỮA: OPENGL 3D VIEWPORT
         # =========================================================================
         mid_container = QWidget()
         mid_lay = QVBoxLayout(mid_container)
@@ -186,9 +198,9 @@ class IntegratedGCSWindow(QMainWindow):
             }
         """)
 
-        lbl_axes_legend = QLabel("<span style='color:#ff3333; font-weight:bold;'>🔴 X (Bắc)</span> | "
-                                 "<span style='color:#33ff33; font-weight:bold;'>🟢 Y (Đông)</span> | "
-                                 "<span style='color:#3399ff; font-weight:bold;'>🔵 Z (Cao)</span>")
+        lbl_axes_legend = QLabel("<span style='color:#ff5252; font-weight:bold;'>🔴 X (0-10m)</span> | "
+                                 "<span style='color:#69f0ae; font-weight:bold;'>🟢 Y (0-10m)</span> | "
+                                 "<span style='color:#40c4ff; font-weight:bold;'>🔵 Z (0-12m)</span>")
         lbl_axes_legend.setStyleSheet("background-color: #161b22; padding: 3px 8px; border-radius: 4px; border: 1px solid #30363d;")
 
         self.btn_cam_follow = QPushButton("🎥 FOLLOW: OFF")
@@ -200,8 +212,8 @@ class IntegratedGCSWindow(QMainWindow):
         for b in [btn_cam_iso, btn_cam_top]:
             b.setStyleSheet("background-color: #21262d; color: #c9d1d9; padding: 4px;")
 
-        btn_cam_iso.clicked.connect(lambda: self.view3d.setCameraPosition(distance=32, elevation=25, azimuth=45))
-        btn_cam_top.clicked.connect(lambda: self.view3d.setCameraPosition(distance=36, elevation=89, azimuth=0))
+        btn_cam_iso.clicked.connect(lambda: self.view3d.setCameraPosition(distance=24, elevation=25, azimuth=45))
+        btn_cam_top.clicked.connect(lambda: self.view3d.setCameraPosition(distance=26, elevation=89, azimuth=0))
 
         overlay_bar.addWidget(self.pbar_takeoff, stretch=2)
         overlay_bar.addWidget(lbl_axes_legend)
@@ -212,75 +224,36 @@ class IntegratedGCSWindow(QMainWindow):
 
         self.view3d = gl.GLViewWidget()
         self.view3d.setBackgroundColor('#0d1117')
-        self.view3d.setCameraPosition(distance=32, elevation=25, azimuth=45)
+        self.view3d.setCameraPosition(distance=24, elevation=25, azimuth=45)
 
-        # ---------------------------------------------------------------------
-        # TẠO LƯỚI Ô VUÔNG ĐƠN VỊ 1M x 1M TRÊN CẢ 3 MẶT PHẲNG (XY, XZ, YZ)
-        # ---------------------------------------------------------------------
-        # 1. Lưới Ô vuông Đơn vị Mặt Đáy XY (Z = 0)
-        grid_xy = gl.GLGridItem()
-        grid_xy.setSize(24, 24, 0)
-        grid_xy.setSpacing(1, 1, 1)  # Mỗi ô đúng 1m x 1m
-        grid_xy.setColor((0.3, 0.4, 0.5, 0.30))
-        self.view3d.addItem(grid_xy)
+        # 1. TẠO LƯỚI Ô VUÔNG 1M x 1M TRÊN 3 MẶT PHẲNG TỌA ĐỘ
+        xy_pts, xz_pts, yz_pts = self._generate_1m_grid_planes(x_max=10, y_max=10, z_max=12)
 
-        # 2. Lưới Ô vuông Đơn vị Mặt Đứng XZ (Bắc - Cao)
-        grid_xz = gl.GLGridItem()
-        grid_xz.setSize(24, 20, 0)
-        grid_xz.setSpacing(1, 1, 1)  # Mỗi ô đúng 1m x 1m
-        grid_xz.rotate(90, 1, 0, 0)
-        grid_xz.translate(0, 0, 10)
-        grid_xz.setColor((0.6, 0.2, 0.2, 0.20))
-        self.view3d.addItem(grid_xz)
+        self.grid_xy_plot = gl.GLLinePlotItem(pos=xy_pts, color=(0.45, 0.55, 0.65, 0.45), width=1.2, mode='lines', antialias=True)
+        self.grid_xz_plot = gl.GLLinePlotItem(pos=xz_pts, color=(0.85, 0.25, 0.25, 0.35), width=1.0, mode='lines', antialias=True)
+        self.grid_yz_plot = gl.GLLinePlotItem(pos=yz_pts, color=(0.25, 0.85, 0.25, 0.35), width=1.0, mode='lines', antialias=True)
 
-        # 3. Lưới Ô vuông Đơn vị Mặt Đứng YZ (Đông - Cao)
-        grid_yz = gl.GLGridItem()
-        grid_yz.setSize(24, 20, 0)
-        grid_yz.setSpacing(1, 1, 1)  # Mỗi ô đúng 1m x 1m
-        grid_yz.rotate(90, 0, 1, 0)
-        grid_yz.translate(0, 0, 10)
-        grid_yz.setColor((0.2, 0.6, 0.2, 0.20))
-        self.view3d.addItem(grid_yz)
+        self.view3d.addItem(self.grid_xy_plot)
+        self.view3d.addItem(self.grid_xz_plot)
+        self.view3d.addItem(self.grid_yz_plot)
 
-        # 3 TRỤC TỌA ĐỘ TRỤC TỌA ĐỘ NỔI BẬT CHÍNH
-        self.axis_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [12.0, 0, 0]], dtype=np.float32),
-                                       color=(1.0, 0.15, 0.15, 1.0), width=5.5, antialias=True)
-        self.axis_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0, 12.0, 0]], dtype=np.float32),
-                                       color=(0.15, 1.0, 0.15, 1.0), width=5.5, antialias=True)
-        self.axis_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0, 0, 16.0]], dtype=np.float32),
-                                       color=(0.2, 0.6, 1.0, 1.0), width=5.5, antialias=True)
+        # 2. 3 TRỤC TỌA ĐỘ CHÍNH
+        self.w_axis_x = gl.GLLinePlotItem(pos=np.array([[0,0,0], [10.0, 0, 0]], dtype=np.float32),
+                                          color=(1.0, 0.2, 0.2, 1.0), width=4.0, antialias=True)
+        self.w_axis_y = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0, 10.0, 0]], dtype=np.float32),
+                                          color=(0.2, 1.0, 0.2, 1.0), width=4.0, antialias=True)
+        self.w_axis_z = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0, 0, 12.0]], dtype=np.float32),
+                                          color=(0.2, 0.6, 1.0, 1.0), width=4.0, antialias=True)
+        self.view3d.addItem(self.w_axis_x)
+        self.view3d.addItem(self.w_axis_y)
+        self.view3d.addItem(self.w_axis_z)
 
-        self.view3d.addItem(self.axis_x)
-        self.view3d.addItem(self.axis_y)
-        self.view3d.addItem(self.axis_z)
-
-        # Mốc chóp đầu các trục & Gốc O(0,0,0)
-        tip_pts = np.array([[12.0, 0, 0], [0, 12.0, 0], [0, 0, 16.0]], dtype=np.float32)
-        tip_colors = np.array([[1.0, 0.15, 0.15, 1.0], [0.15, 1.0, 0.15, 1.0], [0.2, 0.6, 1.0, 1.0]], dtype=np.float32)
-        self.axis_tips = gl.GLScatterPlotItem(pos=tip_pts, color=tip_colors, size=15)
-        self.view3d.addItem(self.axis_tips)
-
+        # Gốc tọa độ O(0,0,0)
         self.origin_node = gl.GLScatterPlotItem(pos=np.array([[0,0,0]], dtype=np.float32),
-                                                color=(1.0, 0.9, 0.0, 1.0), size=18)
+                                                color=(1.0, 0.9, 0.0, 1.0), size=14)
         self.view3d.addItem(self.origin_node)
 
-        # CỘT MỐC CẤT CÁNH 10M
-        self.beacon_line = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,10]], dtype=np.float32),
-                                            color=(1.0, 0.2, 0.2, 0.4), width=1.8, antialias=True)
-        self.view3d.addItem(self.beacon_line)
-
-        target_ring_pts = self._generate_circle_points(1.2, 0, 0, 10, 32)
-        self.target_ring = gl.GLLinePlotItem(pos=target_ring_pts, color=(1.0, 0.2, 0.2, 0.8), width=2.2, antialias=True)
-        self.view3d.addItem(self.target_ring)
-
-        self.drop_line = gl.GLLinePlotItem(pos=np.array([[0,0,0], [0,0,0]], dtype=np.float32),
-                                          color=(0.3, 0.8, 1.0, 0.6), width=1.5, antialias=True)
-        self.view3d.addItem(self.drop_line)
-
-        shadow_pts = self._generate_circle_points(0.6, 0, 0, 0, 24)
-        self.shadow_disk = gl.GLLinePlotItem(pos=shadow_pts, color=(0.1, 0.5, 0.8, 0.7), width=1.8, antialias=True)
-        self.view3d.addItem(self.shadow_disk)
-
+        # 3. QUỸ ĐẠO THỰC TẾ & MỤC TIÊU
         self.planned_path = gl.GLLinePlotItem(pos=np.zeros((2, 3), dtype=np.float32),
                                               color=(1.0, 0.2, 0.2, 0.85), width=2.5, antialias=True)
         self.view3d.addItem(self.planned_path)
@@ -289,15 +262,15 @@ class IntegratedGCSWindow(QMainWindow):
                                              color=(1.0, 0.85, 0.0, 1.0), width=3.5, antialias=True)
         self.view3d.addItem(self.actual_path)
 
-        # MÔ HÌNH DRONE 3D
+        # 4. MÔ HÌNH DRONE VÀ BODY AXES
         self.drone_body = gl.GLLinePlotItem(pos=np.zeros((9, 3), dtype=np.float32),
                                            color=(0.0, 0.9, 1.0, 1.0), width=3.0, antialias=True)
         self.view3d.addItem(self.drone_body)
 
         self.front_arms = gl.GLLinePlotItem(pos=np.zeros((4, 3), dtype=np.float32),
-                                           color=(1.0, 0.2, 0.2, 1.0), width=4.5, antialias=True)
+                                           color=(1.0, 0.2, 0.2, 1.0), width=4.5, mode='lines', antialias=True)
         self.rear_arms = gl.GLLinePlotItem(pos=np.zeros((4, 3), dtype=np.float32),
-                                          color=(0.9, 0.9, 0.9, 1.0), width=4.5, antialias=True)
+                                          color=(0.85, 0.85, 0.85, 1.0), width=4.5, mode='lines', antialias=True)
         self.view3d.addItem(self.front_arms)
         self.view3d.addItem(self.rear_arms)
 
@@ -311,6 +284,17 @@ class IntegratedGCSWindow(QMainWindow):
         ]
         for pb in self.prop_blades:
             self.view3d.addItem(pb)
+
+        # BODY AXES TRÊN DRONE
+        self.body_axis_x = gl.GLLinePlotItem(pos=np.zeros((2, 3), dtype=np.float32),
+                                             color=(1.0, 0.1, 0.1, 1.0), width=4.0, antialias=True)
+        self.body_axis_y = gl.GLLinePlotItem(pos=np.zeros((2, 3), dtype=np.float32),
+                                             color=(0.1, 1.0, 0.1, 1.0), width=4.0, antialias=True)
+        self.body_axis_z = gl.GLLinePlotItem(pos=np.zeros((2, 3), dtype=np.float32),
+                                             color=(0.2, 0.6, 1.0, 1.0), width=4.0, antialias=True)
+        self.view3d.addItem(self.body_axis_x)
+        self.view3d.addItem(self.body_axis_y)
+        self.view3d.addItem(self.body_axis_z)
 
         mid_lay.addWidget(self.view3d)
         splitter.addWidget(mid_container)
@@ -352,7 +336,7 @@ class IntegratedGCSWindow(QMainWindow):
         self.timer.timeout.connect(self._loop)
         self.timer.start(10)
 
-        self._log_event("Clean 1m x 1m Unit Grid Cage Loaded.")
+        self._log_event("GCS Viewport Initialized. Geofenced Boundaries Active.")
 
     def _toggle_cam_follow(self):
         self.camera_follow = not self.camera_follow
@@ -367,10 +351,10 @@ class IntegratedGCSWindow(QMainWindow):
     def _cmd_takeoff(self):
         self.is_armed = True
         self.flight_state = "TAKEOFF"
-        self.target_position = np.array([0.0, 0.0, -10.0])
+        self.target_position = np.array([5.0, 5.0, -10.0])
         self.lbl_mode.setText("STATE: AUTO TAKEOFF (10m)")
         self.lbl_mode.setStyleSheet("color: #00e676; font-size: 13px; font-weight: bold; background-color: #161b22; padding: 6px;")
-        self._log_event("🛫 CMD: Auto Takeoff -> Target Z = 10.0m")
+        self._log_event("🛫 CMD: Auto Takeoff -> Target [5, 5, 10m]")
 
     def _cmd_hover(self):
         self.is_armed = True
@@ -379,7 +363,7 @@ class IntegratedGCSWindow(QMainWindow):
         self.target_position = true_pos.copy()
         self.lbl_mode.setText("STATE: POSITION HOVER")
         self.lbl_mode.setStyleSheet("color: #ffeb3b; font-size: 13px; font-weight: bold; background-color: #161b22; padding: 6px;")
-        self._log_event(f"📍 CMD: Position Lock Hover at Z={-true_pos[2]:.2f}m")
+        self._log_event(f"📍 CMD: Position Lock Hover at [{true_pos[0]:.1f}, {true_pos[1]:.1f}, {-true_pos[2]:.1f}]m")
 
     def _cmd_land(self):
         if not self.is_armed or abs(self.physics.position[2]) < 0.2:
@@ -399,6 +383,12 @@ class IntegratedGCSWindow(QMainWindow):
         self.lbl_mode.setText("STATE: EMERGENCY DISARMED")
         self.lbl_mode.setStyleSheet("color: #ff5252; font-size: 13px; font-weight: bold; background-color: #161b22; padding: 6px;")
         self.controller.reset()
+        
+        self.physics.position[2] = 0.0
+        self.physics.velocity = np.zeros(3)
+        self.physics.orientation = np.zeros(3)
+        self.physics.angular_velocity = np.zeros(3)
+        
         self.pbar_takeoff.setValue(0)
         self.pbar_takeoff.setFormat("TAKEOFF PROGRESS: DISARMED")
         self._log_event("🛑 EMERGENCY STOP EXECUTED!")
@@ -411,8 +401,11 @@ class IntegratedGCSWindow(QMainWindow):
         self.lbl_mode.setStyleSheet("color: #a371f7; font-size: 13px; font-weight: bold; background-color: #161b22; padding: 6px;")
         self.traj_3d.clear()
         self.ref_3d.clear()
-        self._log_event(f"🌐 Switched Advanced Trajectory -> {pattern_name}")
+        self._log_event(f"🌐 Switched Trajectory -> {pattern_name}")
 
+    # =========================================================================
+    # QUỸ ĐẠO BÁM KHÓA CHẶT TRONG GÓC PHẦN TƯ (X: 1-9m, Y: 1-9m, Z: 1-11m)
+    # =========================================================================
     def _compute_target_trajectory(self, t):
         target = np.zeros(12)
 
@@ -425,7 +418,7 @@ class IntegratedGCSWindow(QMainWindow):
                 self.flight_state = "HOVER"
                 self.lbl_mode.setText("STATE: POSITION HOVER (10m)")
                 self.lbl_mode.setStyleSheet("color: #ffeb3b; font-size: 13px; font-weight: bold; background-color: #161b22; padding: 6px;")
-                self._log_event("Takeoff Complete -> Steady Hover at 10m.")
+                self._log_event("Takeoff Complete -> Steady Hover at [5, 5, 10m].")
 
         elif self.flight_state == "LAND":
             self.target_position[0] = self.land_start_xy[0]
@@ -437,54 +430,66 @@ class IntegratedGCSWindow(QMainWindow):
                 self._cmd_stop()
 
         elif self.flight_state == "MISSION":
+            # Tâm lưới ô vuông [5.0, 5.0, -10.0]
+            cx, cy, cz = 5.0, 5.0, -10.0
+
             if self.trajectory_pattern == "KNOT3D":
                 w = 0.20
-                scale = 5.0
-                target[0] = scale * (np.sin(w*t) + 2.0 * np.sin(2.0*w*t)) / 3.0
-                target[1] = scale * (np.cos(w*t) - 2.0 * np.cos(2.0*w*t)) / 3.0
-                target[2] = -10.0 - 3.0 * np.sin(3.0*w*t)
+                target[0] = cx + 3.0 * (np.sin(w*t) + 2.0 * np.sin(2.0*w*t)) / 3.0
+                target[1] = cy + 3.0 * (np.cos(w*t) - 2.0 * np.cos(2.0*w*t)) / 3.0
+                target[2] = cz - 1.5 * np.sin(3.0*w*t)
 
             elif self.trajectory_pattern == "ROSE3D":
                 w = 0.18
-                R = 6.0
-                r_t = R * np.cos(2.0 * w * t)
-                target[0] = r_t * np.cos(w * t)
-                target[1] = r_t * np.sin(w * t)
-                target[2] = -10.0 + 2.5 * np.sin(4.0 * w * t)
+                r_t = 3.5 * np.cos(2.0 * w * t)
+                target[0] = cx + r_t * np.cos(w * t)
+                target[1] = cy + r_t * np.sin(w * t)
+                target[2] = cz + 1.2 * np.sin(4.0 * w * t)
 
             elif self.trajectory_pattern == "CONICAL":
-                w = 0.35
-                r_base = 1.5 + 0.4 * (t % 15.0)
-                target[0] = r_base * np.cos(w * t)
-                target[1] = r_base * np.sin(w * t)
-                target[2] = -6.0 - 0.5 * (t % 15.0)
+                w = 0.22
+                r = 1.5 + 2.0 * (0.5 + 0.5 * np.sin(0.1 * t))
+                target[0] = cx + r * np.cos(w * t)
+                target[1] = cy + r * np.sin(w * t)
+                target[2] = cz - 1.5 * np.sin(0.15 * t)
+                target[3] = -r * w * np.sin(w * t)
+                target[4] =  r * w * np.cos(w * t)
 
             elif self.trajectory_pattern == "GRIDSEARCH":
-                period = 20.0
+                side = 3.5
+                period = 16.0
                 t_mod = t % period
-                target[2] = -10.0
-                if t_mod < 5.0:
-                    target[0] = -6.0 + 2.4 * t_mod
-                    target[1] = -5.0
-                elif t_mod < 10.0:
-                    target[0] = 6.0
-                    target[1] = -5.0 + 2.0 * (t_mod - 5.0)
-                elif t_mod < 15.0:
-                    target[0] = 6.0 - 2.4 * (t_mod - 10.0)
-                    target[1] = 5.0
+                target[2] = cz
+                if t_mod < 4.0:
+                    s = t_mod / 4.0
+                    target[0], target[1] = cx - side + 2*side*s, cy - side
+                elif t_mod < 8.0:
+                    s = (t_mod - 4.0) / 4.0
+                    target[0], target[1] = cx + side, cy - side + 2*side*s
+                elif t_mod < 12.0:
+                    s = (t_mod - 8.0) / 4.0
+                    target[0], target[1] = cx + side - 2*side*s, cy + side
                 else:
-                    target[0] = -6.0
-                    target[1] = 5.0 - 2.0 * (t_mod - 15.0)
+                    s = (t_mod - 12.0) / 4.0
+                    target[0], target[1] = cx - side, cy + side - 2*side*s
 
             elif self.trajectory_pattern == "FIGURE8":
-                R, w = 5.0, 0.25
-                target[0] = R * np.sin(w * t)
-                target[1] = R * np.sin(2.0 * w * t) / 2.0
-                target[2] = -10.0
+                R, w = 3.5, 0.22
+                target[0] = cx + R * np.sin(w * t)
+                target[1] = cy + R * np.sin(2.0 * w * t) / 2.0
+                target[2] = cz
+                target[3] = R * w * np.cos(w * t)
+                target[4] = R * w * np.cos(2.0 * w * t)
 
         return target
 
     def _loop(self):
+        # KHÓA BIÊN AN TOÀN (HARD SAFETY GEOFENCE: X in [0, 10], Y in [0, 10], Z in [0, 12])
+        if self.is_armed:
+            self.physics.position[0] = np.clip(self.physics.position[0], 0.0, 10.0)
+            self.physics.position[1] = np.clip(self.physics.position[1], 0.0, 10.0)
+            self.physics.position[2] = np.clip(self.physics.position[2], -12.0, 0.0)
+
         true_state = self.physics.get_state_dict()
 
         if "angular_velocity" in true_state:
@@ -511,13 +516,15 @@ class IntegratedGCSWindow(QMainWindow):
             u_cmd = np.zeros(4)
             self.physics.position[2] = 0.0
             self.physics.velocity = np.zeros(3)
+            self.physics.orientation = np.zeros(3)
+            self.physics.angular_velocity = np.zeros(3)
 
         pos = true_state["position"]
         vel = true_state["velocity"]
         att = np.degrees(true_state["orientation"])
-        yaw = true_state["orientation"][2]
+        phi, theta, psi = true_state["orientation"]
 
-        x, y, z = pos[0], pos[1], -pos[2]
+        x, y_pos, z = pos[0], pos[1], -pos[2]
         ref_x, ref_y, ref_z = target_state[0], target_state[1], -target_state[2]
 
         error_3d = np.linalg.norm(pos[0:3] - target_state[0:3])
@@ -527,13 +534,13 @@ class IntegratedGCSWindow(QMainWindow):
             self.pbar_takeoff.setValue(takeoff_pct)
             self.pbar_takeoff.setFormat(f"TAKEOFF PROGRESS: {takeoff_pct}% ({z:4.1f}m / 10.0m) | Vz: {-vel[2]:4.2f}m/s")
 
-        self.lbl_cur_pos.setText(f"📍 Actual (X,Y,Z):  [{x:6.2f}, {y:6.2f}, {z:6.2f}] m")
+        self.lbl_cur_pos.setText(f"📍 Actual (X,Y,Z):  [{x:6.2f}, {y_pos:6.2f}, {z:6.2f}] m")
         self.lbl_target_pos.setText(f"🎯 Target (X,Y,Z):  [{ref_x:6.2f}, {ref_y:6.2f}, {ref_z:6.2f}] m")
         self.lbl_error_3d.setText(f"⚠️ Error 3D (m)  :   {error_3d:6.3f} m")
         self.lbl_flight_time.setText(f"⏱ Flight Time   :   {self.sim_time:6.1f} s")
 
         if self.is_armed:
-            self.traj_3d.append([x, y, z])
+            self.traj_3d.append([x, y_pos, z])
             self.ref_3d.append([ref_x, ref_y, ref_z])
 
             if len(self.traj_3d) > 800:
@@ -546,68 +553,88 @@ class IntegratedGCSWindow(QMainWindow):
                 self.actual_path.setData(pos=np.array(self.traj_3d, dtype=np.float32))
                 self.planned_path.setData(pos=np.array(self.ref_3d, dtype=np.float32))
 
-            self.beacon_line.setData(pos=np.array([[ref_x, ref_y, 0], [ref_x, ref_y, ref_z]], dtype=np.float32))
-            target_ring_pts = self._generate_circle_points(1.2, ref_x, ref_y, ref_z, 32)
-            self.target_ring.setData(pos=target_ring_pts.astype(np.float32))
+            # MA TRẬN XOAY CHUẨN XÁC ĐỒ HỌA 3D
+            c_p, s_p = np.cos(phi), np.sin(phi)
+            c_t, s_t = np.cos(theta), np.sin(theta)
+            c_y, s_y = np.cos(psi), np.sin(psi)
 
-            self.drop_line.setData(pos=np.array([[x, y, 0], [x, y, z]], dtype=np.float32))
-            shadow_pts = self._generate_circle_points(0.6, x, y, 0.02, 24)
-            self.shadow_disk.setData(pos=shadow_pts.astype(np.float32))
+            R_ned = np.array([
+                [c_y*c_t, c_y*s_t*s_p - s_y*c_p, c_y*s_t*c_p + s_y*s_p],
+                [s_y*c_t, s_y*s_t*s_p + c_y*c_p, s_y*s_t*c_p - c_y*s_p],
+                [-s_t,    c_t*s_p,               c_t*c_p]
+            ])
 
-            # Mô hình Quadrotor 3D
-            arm_len = 0.65
-            c, s = np.cos(yaw), np.sin(yaw)
+            M = np.diag([1.0, 1.0, -1.0])
+            R_gl = M @ R_ned @ M
 
+            drone_origin = np.array([x, y_pos, z])
+
+            # BODY AXES (0.9m) GẮN TRỰC TIẾP TẠI TÂM DRONE
+            axis_len = 0.9
+            bx_end = drone_origin + R_gl @ np.array([axis_len, 0.0, 0.0])
+            by_end = drone_origin + R_gl @ np.array([0.0, axis_len, 0.0])
+            bz_end = drone_origin + R_gl @ np.array([0.0, 0.0, axis_len])
+
+            self.body_axis_x.setData(pos=np.array([drone_origin, bx_end], dtype=np.float32))
+            self.body_axis_y.setData(pos=np.array([drone_origin, by_end], dtype=np.float32))
+            self.body_axis_z.setData(pos=np.array([drone_origin, bz_end], dtype=np.float32))
+
+            # Thân Quadrotor Canopy Frame
             b_size = 0.22
-            body_pts = np.array([
-                [x + b_size*c, y + b_size*s, z + 0.05],
-                [x - b_size*s, y + b_size*c, z + 0.05],
-                [x - b_size*c, y - b_size*s, z + 0.05],
-                [x + b_size*s, y - b_size*c, z + 0.05],
-                [x + b_size*c, y + b_size*s, z + 0.05],
-                [x, y, z + 0.12],
-                [x - b_size*c, y - b_size*s, z + 0.05],
-                [x, y, z + 0.12],
-                [x - b_size*s, y + b_size*c, z + 0.05]
-            ], dtype=np.float32)
-            self.drone_body.setData(pos=body_pts)
+            raw_body = np.array([
+                [ b_size,  b_size, 0.05],
+                [-b_size,  b_size, 0.05],
+                [-b_size, -b_size, 0.05],
+                [ b_size, -b_size, 0.05],
+                [ b_size,  b_size, 0.05],
+                [ 0.0,     0.0,    0.12],
+                [-b_size, -b_size, 0.05],
+                [ 0.0,     0.0,    0.12],
+                [-b_size,  b_size, 0.05]
+            ])
+            body_pts = drone_origin + (R_gl @ raw_body.T).T
+            self.drone_body.setData(pos=body_pts.astype(np.float32))
 
-            f_arm1 = np.array([[x, y, z], [x + arm_len*(c - s), y + arm_len*(s + c), z]], dtype=np.float32)
-            f_arm2 = np.array([[x, y, z], [x + arm_len*(c + s), y + arm_len*(s - c), z]], dtype=np.float32)
-            r_arm1 = np.array([[x, y, z], [x - arm_len*(c - s), y - arm_len*(s + c), z]], dtype=np.float32)
-            r_arm2 = np.array([[x, y, z], [x - arm_len*(c + s), y - arm_len*(s - c), z]], dtype=np.float32)
+            # 4 Cánh tay Quadrotor
+            arm_l = 0.65
+            f1 = drone_origin + R_gl @ np.array([ arm_l,  arm_l, 0.0])
+            f2 = drone_origin + R_gl @ np.array([ arm_l, -arm_l, 0.0])
+            r1 = drone_origin + R_gl @ np.array([-arm_l,  arm_l, 0.0])
+            r2 = drone_origin + R_gl @ np.array([-arm_l, -arm_l, 0.0])
 
-            self.front_arms.setData(pos=np.vstack([f_arm1, f_arm2]))
-            self.rear_arms.setData(pos=np.vstack([r_arm1, r_arm2]))
+            f_lines = np.array([drone_origin, f1, drone_origin, f2], dtype=np.float32)
+            r_lines = np.array([drone_origin, r1, drone_origin, r2], dtype=np.float32)
 
-            motors_pos = [
-                [x + arm_len*(c - s), y + arm_len*(s + c), z],
-                [x + arm_len*(c + s), y + arm_len*(s - c), z],
-                [x - arm_len*(c - s), y - arm_len*(s + c), z],
-                [x - arm_len*(c + s), y - arm_len*(s - c), z]
-            ]
+            self.front_arms.setData(pos=f_lines)
+            self.rear_arms.setData(pos=r_lines)
 
-            hubs_lines = []
-            for m in motors_pos:
-                hubs_lines.append(m)
-                hubs_lines.append([m[0], m[1], m[2] + 0.08])
-            self.motor_hubs.setData(pos=np.array(hubs_lines, dtype=np.float32))
+            # Cụm động cơ đứng
+            motors = [f1, f2, r1, r2]
+            hubs = []
+            for m in motors:
+                top_m = m + R_gl @ np.array([0.0, 0.0, 0.06])
+                hubs.extend([m, top_m])
+            self.motor_hubs.setData(pos=np.array(hubs, dtype=np.float32))
 
-            prop_r = 0.38
+            # 4 Cánh quạt quay phẳng
+            prop_r = 0.35
             dirs = [1.0, -1.0, -1.0, 1.0]
-            for i, m in enumerate(motors_pos):
-                a_i = self.prop_angle * dirs[i] + yaw
-                b1_start = [m[0] + prop_r*np.cos(a_i), m[1] + prop_r*np.sin(a_i), m[2] + 0.08]
-                b1_end   = [m[0] - prop_r*np.cos(a_i), m[1] - prop_r*np.sin(a_i), m[2] + 0.08]
+            for i, m in enumerate(motors):
+                m_top = m + R_gl @ np.array([0.0, 0.0, 0.06])
+                a_i = self.prop_angle * dirs[i]
                 
-                b2_start = [m[0] + prop_r*np.cos(a_i + np.pi/2), m[1] + prop_r*np.sin(a_i + np.pi/2), m[2] + 0.08]
-                b2_end   = [m[0] - prop_r*np.cos(a_i + np.pi/2), m[1] - prop_r*np.sin(a_i + np.pi/2), m[2] + 0.08]
+                b1_body = np.array([prop_r * np.cos(a_i), prop_r * np.sin(a_i), 0.0])
+                b2_body = np.array([prop_r * np.cos(a_i + np.pi/2), prop_r * np.sin(a_i + np.pi/2), 0.0])
 
-                blade_lines = np.array([b1_start, b1_end, b2_start, b2_end], dtype=np.float32)
-                self.prop_blades[i].setData(pos=blade_lines)
+                p1_s = m_top + R_gl @ b1_body
+                p1_e = m_top - R_gl @ b1_body
+                p2_s = m_top + R_gl @ b2_body
+                p2_e = m_top - R_gl @ b2_body
+
+                self.prop_blades[i].setData(pos=np.array([p1_s, p1_e, p2_s, p2_e], dtype=np.float32))
 
             if self.camera_follow and self.is_armed:
-                self.view3d.opts['center'] = pg.Vector(x, y, z)
+                self.view3d.opts['center'] = pg.Vector(x, y_pos, z)
 
         except Exception:
             pass
