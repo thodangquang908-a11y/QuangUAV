@@ -1,4 +1,4 @@
-controllers:
+st-flash write build/firmware.bin 0x08000000openocd -f interface/stlink.cfg -f target/stm32f4x.cfg -c "program build/firmware.elf verify reset exit"controllers:
   rate:
     roll:  { kp: 0.20, ki: 0.05, kd: 0.005, limit_out: 0.80, limit_int: 0.20, lpf_cutoff: 35.0 }
     pitch: { kp: 0.20, ki: 0.05, kd: 0.005, limit_out: 0.80, limit_int: 0.20, lpf_cutoff: 35.0 }
